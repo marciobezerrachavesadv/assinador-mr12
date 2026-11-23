@@ -10,6 +10,7 @@ import { finalizeDocument, initSealer, sealerStatus } from './finalize.js';
 import { sendCopies, mailEnabled } from './mail.js';
 import { validatePdf, loadTrustedRoots } from './pdf/validate.js';
 import { emit } from './notify.js';
+import { mountMcp } from './mcp.js';
 import {
   nowIso, randomToken, sha256Hex, verificationCode, isValidCpf, onlyDigits, normalizePhone, todayLocalDate,
   safeFilename, dataUrlToBuffer, isPng, isJpeg, isPdf, pngSize,
@@ -136,25 +137,27 @@ function parsePlacements(raw, nSigners, pageCounts) {
   });
 }
 
-app.post('/api/documents', requireAuth, upload.array('file', config.limits.files), async (req, res) => {
-  const files = req.files ?? [];
+// Cria documento(s) para assinatura. Usado pelo painel e pela ponte com outros sistemas (MCP).
+// inp: { files: [{buffer, originalname}], mode, titles (JSON), title, signers (JSON), deadline, ordered, placements (JSON), userId, ip, ua, via }
+export async function criarDocumentos(inp) {
+  const files = inp.files ?? [];
   if (!files.length) throw bad('Envie o arquivo PDF.');
-  const mode = req.body?.mode === 'separate' && files.length > 1 ? 'separate' : 'together';
+  const mode = inp.mode === 'separate' && files.length > 1 ? 'separate' : 'together';
   let titles = [];
-  if (mode === 'separate') { try { titles = JSON.parse(req.body?.titles ?? '[]'); } catch { titles = []; } }
+  if (mode === 'separate') { try { titles = JSON.parse(inp.titles ?? '[]'); } catch { titles = []; } }
   const checkTitle = (t) => { t = String(t ?? '').trim(); if (t.length < 2 || t.length > 200) throw bad('Informe um título de 2 a 200 caracteres para cada documento.'); return t; };
-  const docTitles = mode === 'separate' ? files.map((f, i) => checkTitle(titles[i] || String(f.originalname || '').replace(/\.pdf$/i, ''))) : [checkTitle(req.body?.title)];
+  const docTitles = mode === 'separate' ? files.map((f, i) => checkTitle(titles[i] || String(f.originalname || '').replace(/\.pdf$/i, ''))) : [checkTitle(inp.title)];
 
   const pageCounts = [];
   for (let i = 0; i < files.length; i++) pageCounts.push(await checkPdf(files[i].buffer, files.length > 1 ? `Arquivo ${i + 1}` : 'O arquivo'));
 
   let list;
-  try { list = JSON.parse(req.body?.signers ?? '[]'); } catch { throw bad('Lista de signatários inválida.'); }
+  try { list = JSON.parse(inp.signers ?? '[]'); } catch { throw bad('Lista de signatários inválida.'); }
   if (!Array.isArray(list) || list.length < 1 || list.length > config.limits.signers) throw bad(`Informe de 1 a ${config.limits.signers} signatários.`);
-  const deadline = String(req.body?.deadline ?? '').trim();
+  const deadline = String(inp.deadline ?? '').trim();
   if (deadline && (!/^\d{4}-\d{2}-\d{2}$/.test(deadline) || deadline < todayLocalDate())) throw bad('O prazo precisa ser uma data de hoje em diante.');
-  const ordered = req.body?.ordered === '1' || req.body?.ordered === 'true';
-  const placements = parsePlacements(req.body?.placements, list.length, pageCounts);
+  const ordered = inp.ordered === '1' || inp.ordered === 'true';
+  const placements = parsePlacements(inp.placements, list.length, pageCounts);
 
   const clean = list.map((s, i) => {
     const name = String(s.name ?? '').trim();
@@ -195,19 +198,25 @@ app.post('/api/documents', requireAuth, upload.array('file', config.limits.files
     const code = verificationCode();
     const id = db.transaction(() => {
       const r = db.prepare(`INSERT INTO documents (code, title, ordered, deadline, original_file, original_sha256, created_by, created_at)
-                            VALUES (?,?,?,?,?,?,?,?)`).run(code, g.title, ordered ? 1 : 0, deadline || null, fileName, sha256Hex(g.bytes), req.user.id, nowIso());
+                            VALUES (?,?,?,?,?,?,?,?)`).run(code, g.title, ordered ? 1 : 0, deadline || null, fileName, sha256Hex(g.bytes), inp.userId, nowIso());
       const docId = Number(r.lastInsertRowid);
       const ins = db.prepare(`INSERT INTO signers (document_id, token, name, cpf, email, phone, ord, require_selfie, require_cpf, require_geo)
                               VALUES (?,?,?,?,?,?,?,?,?,?)`);
       const signerIds = clean.map((s) => Number(ins.run(docId, randomToken(24), s.name, s.cpf || null, s.email || null, s.phone || null, s.ord, s.selfie, s.reqCpf, s.reqGeo).lastInsertRowid));
       if (g.pl.length) db.prepare('UPDATE documents SET placements = ? WHERE id = ?')
         .run(JSON.stringify(g.pl.map((p) => ({ signer_id: signerIds[p.signer], page: p.page, x: p.x, y: p.y, w: p.w, h: p.h }))), docId);
-      logEvent(docId, null, 'created', { ip: req.ip, ua: req.get('user-agent') });
+      logEvent(docId, null, 'created', { ip: inp.ip, ua: inp.ua, via: inp.via || undefined });
       return docId;
     })();
     created.push({ id, code, title: g.title });
   }
-  res.status(201).json({ id: created[0].id, code: created[0].code, documents: created });
+  return { id: created[0].id, code: created[0].code, documents: created };
+}
+
+
+app.post('/api/documents', requireAuth, upload.array('file', config.limits.files), async (req, res) => {
+  const out = await criarDocumentos({ ...req.body, files: req.files ?? [], userId: req.user.id, ip: req.ip, ua: req.get('user-agent') });
+  res.status(201).json(out);
 });
 
 function docDetail(id) {
@@ -447,6 +456,9 @@ app.get('/api/verificar/:code', pubLimit, (req, res) => {
     signers: signers.map((x) => ({ name: x.name, status: x.status, signedAt: x.signed_at })),
   });
 });
+
+// ---------------- ponte com outros sistemas (MCP) ----------------
+mountMcp(app, { criarDocumentos, docDetail, abs });
 
 // ---------------- erros ----------------
 app.use('/api', (req, res) => res.status(404).json({ error: 'Rota não encontrada.' }));

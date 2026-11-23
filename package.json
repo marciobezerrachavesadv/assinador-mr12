@@ -1,6 +1,6 @@
 {
   "name": "assinadormr12",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "AssinadorMR12 - assinatura eletronica de documentos para uso proprio da MR12, com selo ICP-Brasil (A1) e validador",
   "type": "module",
@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node test/e2e.mjs"
+    "test": "node test/e2e.mjs && node test/mcp.mjs"
   },
   "dependencies": {
     "@signpdf/placeholder-pdf-lib": "^4.0.0",

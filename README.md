@@ -74,3 +74,16 @@ Senhas com scrypt; sessões com token em hash, cookie HttpOnly/SameSite=Strict; 
 - Não há token por SMS/WhatsApp/e-mail: quem tem o link assina. Envie o link só ao cliente, e use CPF pré-cadastrado e prazo curto.
 - O envio por WhatsApp é um link `wa.me` (você clica e envia). A integração automática com o MRZap/Baileys é uma fase futura (há webhook `NOTIFY_WEBHOOK_URL` para isso).
 - Selfie, CPF e localização são dados pessoais: defina prazo de guarda, mantenha disco criptografado e backup protegido, e confirme a base legal e o texto do termo com a sua assessoria jurídica/LGPD.
+
+## Ponte com o SST MR12 (conector MCP)
+
+Permite que o SST MR12 envie o contrato para assinatura, acompanhe quem já assinou e baixe o PDF assinado, sem abrir o painel.
+
+1. No servidor, gere um token: `openssl rand -hex 32` e coloque no `.env`: `MCP_TOKEN=<token>`.
+2. Ou, no servidor, rode só `./scripts/ativar-ponte.sh`: ele cria o token, reconstrói e mostra o endereço do conector.
+3. No claude.ai: **Configurações → Conectores → Adicionar conector personalizado**. Nome: **AssinadorMR12**. URL: `https://<seu-endereço>/mcp/<token>`.
+4. Pronto: no SST MR12, abra um contrato e use **Enviar para assinatura**.
+
+O endereço com o token funciona como senha: não compartilhe. Para revogar, troque o `MCP_TOKEN` e reinicie.
+
+Ferramentas: `enviar_para_assinatura`, `consultar_assinatura`, `baixar_documento_assinado`, `cancelar_assinatura`.
