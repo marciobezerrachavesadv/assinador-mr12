@@ -62,6 +62,15 @@ try {
   const fin = (await tool('baixar_documento_assinado', { id: doc.id }))?.structuredContent;
   ok(fin && Buffer.from(fin.pdf_base64, 'base64').subarray(0, 5).toString() === '%PDF-', 'PDF final baixado pela ponte');
 
+  const fp = (await tool('baixar_documento_assinado', { id: doc.id, parte: 0 }))?.structuredContent;
+  let junto = ''; for (let i = 0; i < (fp?.total_partes || 0); i++) junto += (await tool('baixar_documento_assinado', { id: doc.id, parte: i })).structuredContent.dados;
+  ok(fp?.total_partes >= 1 && junto === fin.pdf_base64, 'download em partes = arquivo inteiro', `${fp?.total_partes}`);
+
+  const TAM = 500, partes = []; for (let i = 0; i < pdf.length; i += TAM) partes.push(pdf.slice(i, i + TAM));
+  let uid = '', ult;
+  for (let i = 0; i < partes.length; i++) { ult = (await tool('enviar_para_assinatura', { titulo: 'Contrato em partes', signatarios: [{ nome: 'Carla Lima' }], pdf_parte: { upload_id: uid, indice: i, total: partes.length, dados: partes[i] } }))?.structuredContent; uid = ult?.upload_id || uid; }
+  ok(partes.length > 1 && ult?.id && ult?.codigo, 'envio em partes cria o documento', `${partes.length} ${JSON.stringify(ult).slice(0, 200)}`);
+
   const env2 = (await tool('enviar_para_assinatura', { titulo: 'Para cancelar', pdf_base64: pdf, signatarios: [{ nome: 'José Souza' }] }))?.structuredContent;
   const can = (await tool('cancelar_assinatura', { id: env2.id }))?.structuredContent;
   ok(can?.situacao === 'cancelled', 'cancelamento pela ponte');

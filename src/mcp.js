@@ -33,8 +33,12 @@ const TOOLS = [
         prazo: { type: 'string', description: 'Data limite AAAA-MM-DD (opcional)' },
         em_ordem: { type: 'boolean', description: 'Assinar na ordem da lista' },
         referencia: { type: 'string', description: 'Identificação no sistema de origem (ex.: contrato 0012/2026)' },
+        pdf_parte: {
+          type: 'object', description: 'Envio do PDF em partes (para PDFs grandes): mande cada parte em uma chamada; a última cria o documento.',
+          properties: { upload_id: { type: 'string' }, indice: { type: 'number' }, total: { type: 'number' }, dados: { type: 'string', description: 'Trecho do base64' } },
+        },
       },
-      required: ['titulo', 'pdf_base64', 'signatarios'],
+      required: ['titulo', 'signatarios'],
     },
   },
   {
@@ -47,7 +51,7 @@ const TOOLS = [
     name: 'baixar_documento_assinado',
     title: 'Baixar o PDF assinado',
     description: 'Devolve o PDF final assinado (com selo, se configurado) em base64. Só funciona depois que todos assinaram.',
-    inputSchema: { type: 'object', properties: { id: { type: 'number' } }, required: ['id'] },
+    inputSchema: { type: 'object', properties: { id: { type: 'number' }, parte: { type: 'number', description: 'Parte do arquivo (0, 1, 2…), para baixar PDFs grandes em pedaços' } }, required: ['id'] },
   },
   {
     name: 'cancelar_assinatura',
@@ -69,6 +73,10 @@ function resumo(d) {
   };
 }
 
+const PARTE = 30000; // caracteres de base64 por parte no download
+const uploads = new Map(); // upload_id -> { partes: [], total, em, bytes }
+function limparUploads() { const lim = Date.now() - 30 * 60_000; for (const [k, v] of uploads) if (v.em < lim) uploads.delete(k); }
+
 export function mountMcp(app, { criarDocumentos, docDetail, abs }) {
   const token = String(process.env.MCP_TOKEN ?? '').trim();
   if (!token) return;
@@ -84,7 +92,23 @@ export function mountMcp(app, { criarDocumentos, docDetail, abs }) {
 
   async function callTool(name, a = {}, req) {
     if (name === 'enviar_para_assinatura') {
-      const b64 = String(a.pdf_base64 || '').replace(/^data:application\/pdf;base64,/, '');
+      let b64 = String(a.pdf_base64 || '').replace(/^data:application\/pdf;base64,/, '');
+      if (!b64 && a.pdf_parte) {
+        limparUploads();
+        const pp = a.pdf_parte, total = Number(pp.total), idx = Number(pp.indice);
+        if (!Number.isInteger(total) || total < 1 || total > 2000 || !Number.isInteger(idx) || idx < 0 || idx >= total) return fail('Parte do PDF inválida.');
+        let uid = String(pp.upload_id || '');
+        if (!uid) { if (uploads.size > 50) return fail('Muitos envios em andamento; tente de novo em alguns minutos.'); uid = crypto.randomBytes(12).toString('hex'); uploads.set(uid, { partes: [], total, em: Date.now(), bytes: 0 }); }
+        const up = uploads.get(uid);
+        if (!up || up.total !== total) return fail('Envio em partes não encontrado ou expirado; recomece.');
+        const dados = String(pp.dados || '');
+        up.bytes += dados.length - (up.partes[idx]?.length || 0);
+        if (up.bytes > config.limits.pdfBytes * 1.4) { uploads.delete(uid); return fail('PDF grande demais (máximo 10 MB).'); }
+        up.partes[idx] = dados; up.em = Date.now();
+        const recebidas = up.partes.filter((x) => typeof x === 'string').length;
+        if (recebidas < total) return result({ upload_id: uid, recebidas, total, completo: false });
+        b64 = up.partes.join(''); uploads.delete(uid);
+      }
       const buf = Buffer.from(b64, 'base64');
       if (!buf.length) return fail('Envie o PDF em base64.');
       if (buf.length > config.limits.pdfBytes) return fail('PDF grande demais (máximo 10 MB).');
@@ -106,7 +130,12 @@ export function mountMcp(app, { criarDocumentos, docDetail, abs }) {
       if (d.status !== 'signed' || !row?.final_file) return fail('O PDF final ainda não está pronto: faltam assinaturas ou a finalização não terminou.');
       const p = abs('finals', row.final_file);
       if (!fs.existsSync(p)) return fail('Arquivo final não encontrado no servidor.');
-      return result({ id, codigo: d.code, nome_arquivo: `${row.title}_assinado.pdf`, pdf_base64: fs.readFileSync(p).toString('base64') });
+      const tudo = fs.readFileSync(p).toString('base64'), total = Math.max(1, Math.ceil(tudo.length / PARTE));
+      const parte = a.parte === undefined || a.parte === null ? null : Number(a.parte);
+      if (parte === null && tudo.length <= PARTE) return result({ id, codigo: d.code, nome_arquivo: `${row.title}_assinado.pdf`, pdf_base64: tudo, parte: 0, total_partes: 1 });
+      const i = parte ?? 0;
+      if (!Number.isInteger(i) || i < 0 || i >= total) return fail('Parte inválida.');
+      return result({ id, codigo: d.code, nome_arquivo: `${row.title}_assinado.pdf`, parte: i, total_partes: total, dados: tudo.slice(i * PARTE, (i + 1) * PARTE) });
     }
     if (name === 'cancelar_assinatura') {
       const r = db.prepare("UPDATE documents SET status = 'cancelled' WHERE id = ? AND status = 'pending'").run(id);
