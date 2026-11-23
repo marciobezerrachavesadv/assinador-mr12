@@ -1,0 +1,29 @@
+{
+  "name": "assinadormr12",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AssinadorMR12 - assinatura eletronica de documentos para uso proprio da MR12, com selo ICP-Brasil (A1) e validador",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node test/e2e.mjs"
+  },
+  "dependencies": {
+    "@signpdf/placeholder-pdf-lib": "^4.0.0",
+    "@signpdf/signer-p12": "^4.0.0",
+    "@signpdf/signpdf": "^4.0.0",
+    "@signpdf/utils": "^4.0.0",
+    "better-sqlite3": "^13.0.3",
+    "express": "^5.3.0",
+    "multer": "^2.5.0",
+    "node-forge": "^1.4.2",
+    "nodemailer": "^6.10.1",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^4.10.38",
+    "qrcode": "^1.5.4"
+  }
+}

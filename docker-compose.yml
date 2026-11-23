@@ -1,0 +1,34 @@
+# Sobe o AssinadorMR12 + Caddy (que cuida do HTTPS sozinho).
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TRUST_PROXY: "1"
+      DATA_DIR: /dados/data
+      STORAGE_DIR: /dados/storage
+    volumes:
+      - dados:/dados
+      - ./certs/raizes:/app/certs/raizes:ro
+      - ./certs/a1:/certs/a1:ro
+    expose:
+      - "3000"
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMINIO: ${DOMINIO}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+volumes:
+  dados:
+  caddy_data:
+  caddy_config:

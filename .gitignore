@@ -1,0 +1,13 @@
+node_modules/
+data/
+storage/
+.env
+*.p12
+*.pfx
+*.key
+certs/teste/
+certs/raizes/*
+!certs/raizes/.gitkeep
+
+certs/a1/*
+!certs/a1/.gitkeep
